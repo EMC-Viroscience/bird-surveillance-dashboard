@@ -5,6 +5,7 @@ format:
     nav-buttons: [github]
     github: https://github.com/LucvZon/EcoAlert
     embed-resources: true
+    scrolling: true
 theme: cosmo
 logo: "images/Erasmus.png"
 ---
@@ -21,11 +22,36 @@ library(lubridate)
 library(tidyr)
 
 # Import data -------------------------------------------------------------
+# Live, free-range birds
 df_fa <- read.csv(
   file = "data/S-BSST1522_SV_FA/Surveillance_Arbovirus_LiveBirds_Netherlands_2016-2022.csv",
   header = TRUE, sep = ",", fill = TRUE, stringsAsFactors = FALSE
   ) %>%
   dplyr::mutate(capture.date = as.Date(capture.date))
+
+# Dead, free-range birds
+df_fd <- read.csv(
+  file = "data/S-BSST1523_SV_FD/Surveillance_Arbovirus_DeadFreeRangingBirds_Netherlands_2016-2022.csv",
+  header = TRUE, sep = ",", fill = TRUE, stringsAsFactors = FALSE
+  ) %>%
+  dplyr::mutate(DeathOrSampleDate = as.Date(DeathOrSampleDate, "%d-%m-%Y"))
+
+# Dead, captive birds
+df_cd <- read.csv(
+  file = "data/S-BSST1505_SV_DC/Surveillance_Arbovirus_DeadCaptiveBirds_Netherlands_2016-2022.csv",
+  header = TRUE, sep = ",", fill = TRUE, stringsAsFactors = FALSE
+  ) %>%
+  dplyr::mutate(DeathOrSampleDate = as.Date(DeathOrSampleDate, "%d-%m-%Y"))
+
+# Combine dead free range and captive birds
+fd_subset <- df_fd %>%
+  select(DeathOrSampleDate, Long, Lat, BirdUSUV) %>%
+  mutate(Wild_Cap = "Wild")
+
+cd_subset <- df_cd %>%
+  select(DeathOrSampleDate, Long, Lat, Wild_Cap, BirdUSUV)
+
+all_dead_birds <- rbind(fd_subset, cd_subset)
 
 # Map of the Netherlands --------------------------------------------------
 nl_map <- sf::st_read(file.path("data/map/gadm41_NLD_1.shp")) %>%
@@ -53,6 +79,10 @@ cluster_and_summarize <- function(data, eps = 0.15, minPts = 1) {
   # Ensure there's data to process
   if (nrow(data) == 0) return(NULL)
   
+  # Discard rows with missing coordinates
+  data <- data %>%
+    dplyr::filter(!is.na(Long) | !is.na(Lat))
+  
   # Select coordinate columns
   coords <- data %>% select(Long, Lat)
   
@@ -60,7 +90,6 @@ cluster_and_summarize <- function(data, eps = 0.15, minPts = 1) {
   clusters <- dbscan(coords, eps = eps, minPts = minPts)
   
   # Add cluster assignments to the data
-  # dbscan's cluster 0 represents noise points, we'll treat them as individual clusters
   data$cluster_id <- clusters$cluster
   
   # Summarize each cluster
@@ -79,7 +108,6 @@ cluster_and_summarize <- function(data, eps = 0.15, minPts = 1) {
 }
 
 cluster_by_group <- function(data, group_col, eps) {
-  # Uses the powerful nest/map/unnest pattern
   data %>%
     group_by({{ group_col }}) %>%
     nest() %>% # Creates a list-column with data for each group
@@ -89,21 +117,36 @@ cluster_by_group <- function(data, group_col, eps) {
     ungroup()
 }
 
-# Total Map Data
-total_clustered_df <- cluster_and_summarize(df_fa, eps = 0.04)
+# Free-ranging live bird data
+live_free_range <- cluster_and_summarize(df_fa, eps = 0.04)
 
-# Family Map Data
-df_fa_processed <- df_fa %>%
-  mutate(family_cat = fct_lump_n(family, n = 7, other_level = "Other"))
+# All dead bird data
+dead_birds_clustered <- cluster_and_summarize(all_dead_birds, eps = 0.04)
 
-family_clustered_df <- cluster_by_group(df_fa_processed, group_col = family_cat, eps = 0.15)
+# Free-ranging live bird positives
+fa_pos_clustered_df <- df_fa %>%
+  dplyr::filter(BirdUSUV == 1 | BirdWNV == 1) %>%
+  mutate(status = case_when(
+    BirdUSUV == 1  ~ "USUV",
+    BirdWNV == 1  ~ "WNV"
+    )) %>%
+  cluster_by_group(eps = 0.04, group_col = status)
 
-# USUV Map Data
-usuv_pos_clustered_df <- df_fa %>%
-  filter(BirdUSUV == 1) %>%
-  cluster_and_summarize(eps = 0.04)
+# Dead bird positives
+dead_pos_clustered <- all_dead_birds %>%
+  dplyr::filter(BirdUSUV == 1) %>%
+  mutate(status = case_when(
+    BirdUSUV == 1  ~ "USUV"
+    )) %>%
+  cluster_by_group(eps = 0.04, group_col = status)
 
-# Virus Barplot Data
+# Live birds: Monthly total sampling
+monthly_samples <- df_fa %>%
+  mutate(month_start = floor_date(capture.date, "month")) %>%
+  count(month_start, class, name = "sample_count") %>%
+  mutate(Month = strftime(month_start, "%Y-%m"))
+
+# Live birds: Monthly positive sampling
 monthly_positives <- df_fa %>%
   filter(BirdUSUV == 1 | BirdWNV == 1) %>%
   pivot_longer(
@@ -114,34 +157,56 @@ monthly_positives <- df_fa %>%
   filter(Status == 1) %>%
   mutate(Virus = sub("Bird", "", Virus)) %>%
   mutate(month_start = floor_date(capture.date, "month")) %>%
-  count(month_start, Virus, name = "sample_count")
+  count(month_start, Virus, name = "sample_count") %>%
+  mutate(Month = strftime(month_start, "%Y-%m"))
 
-# Total Sampling Barplot Data
-monthly_samples <- df_fa %>%
-  mutate(month_start = floor_date(capture.date, "month")) %>%
-  count(month_start, class, name = "sample_count")
+# Dead birds: Monthly total sampling
+monthly_dead <- all_dead_birds %>%
+  mutate(month_start = floor_date(DeathOrSampleDate, "month")) %>%
+  count(month_start, Wild_Cap, name = "sample_count") %>%
+  mutate(Month = strftime(month_start, "%Y-%m"))
+
+# Dead birds: Monthly positive sampling
+monthly_dead_positives <- all_dead_birds %>%
+  filter(BirdUSUV == 1) %>%
+    pivot_longer(
+    cols = BirdUSUV, 
+    names_to = "Virus", 
+    values_to = "Status"
+  ) %>%
+  mutate(
+    Virus = sub("Bird", "", Virus),
+    month_start = floor_date(DeathOrSampleDate, "month")
+    ) %>%
+  count(month_start, Virus, name = "sample_count") %>%
+  mutate(Month = strftime(month_start, "%Y-%m"))
 ```
 
 
 # Spatial Overview
 
+::: {.callout-note}
+- Dashboard Version: **1.0.0**
+- Last updated: **18/11/2025**
+:::
+
 ## Row
 
 ### Total captures
 
-```{r total_captures, message = FALSE, warning = FALSE, echo = FALSE}
-#| title: "All Bird Capture Locations, 2016-2022"
+```{r fa_total_captures, message = FALSE, warning = FALSE, echo = FALSE}
+#| title: "Free-ranging Live Birds Capture Locations, 2016-2022"
 
 total_map <- base_map +
   geom_point(
-    data = total_clustered_df,
+    data = live_free_range,
     aes(
       x = Long_rep, y = Lat_rep, size = cluster_size,
       text = paste("Number of Birds:", cluster_size)
     ),
     fill = "steelblue", alpha = 0.6, shape = 21, color = "black", stroke = 0.4
   ) +
-  scale_size_continuous(name = "Number of Birds", range = c(1, 10)) +
+  scale_size_continuous(name = "Number of Birds", range = c(0.5, 7.5)) +
   labs(title = " ")
 
 ggplotly(total_map, tooltip = "text") %>%
@@ -154,49 +219,20 @@ ggplotly(total_map, tooltip = "text") %>%
 
 ### Captures by Family
 
-```{r family_captures, message = FALSE, warning = FALSE, echo = FALSE}
-#| title: "Captures by Bird Family, 2016-2022"
-
-family_map <- base_map +
+```{r fa_positive_captures, message = FALSE, warning = FALSE, echo = FALSE}
+#| title: "Free-ranging Positive Live Birds Capture Locations, 2016-2022"
+usuv_map <- base_map +
   geom_point(
-    data = family_clustered_df,
+    data = fa_pos_clustered_df,
     aes(
-      x = Long_rep, y = Lat_rep, size = cluster_size, fill = family_cat,
-      text = paste("Family:", family_cat, "<br>Number of Birds:", cluster_size)
+      x = Long_rep, y = Lat_rep, size = cluster_size,
+      text = paste("Virus:", status, "<br>Number of Birds:", cluster_size),
+      fill = status
     ),
     alpha = 0.75, shape = 21, color = "black", stroke = 0.4
   ) +
-  scale_size_continuous(name = "Number of Birds", range = c(1, 10)) +
-  scale_fill_brewer(name = "Bird Family", palette = "Set1") +
-  labs(title = " ")
-
-ggplotly(family_map, tooltip = "text") %>%
-  layout(
-    xaxis = list(autorange = TRUE),
-    yaxis = list(autorange = TRUE),
-    margin = list(l = 0, r = 0, b = 0, t = 20, pad = 0)
-  )
-```
-
-# Virus Surveillance
-
-## Row
-
-### USUV Positive Birds
-
-```{r usuv_map, message = FALSE, warning = FALSE, echo = FALSE}
-#| title: "Geographic Distribution of USUV Positive Birds, 2016-2022"
-
-usuv_map <- base_map +
-  geom_point(
-    data = usuv_pos_clustered_df,
-    aes(
-      x = Long_rep, y = Lat_rep, size = cluster_size,
-      text = paste("Number of Birds:", cluster_size)
-    ),
-    fill = "firebrick", alpha = 0.75, shape = 21, color = "black", stroke = 0.4
-  ) +
-  scale_size_continuous(name = "Number of Birds", range = c(2, 16)) +
+  scale_size_continuous(name = "Virus detections", range = c(1, 7.5)) +
+  scale_fill_manual(name = "", values = c("USUV" = "firebrick", "WNV" = "orange")) +
   labs(title = " ")
 
 ggplotly(usuv_map, tooltip = "text") %>%
@@ -207,38 +243,283 @@ ggplotly(usuv_map, tooltip = "text") %>%
   )
 ```
 
-### Monthly Virus Detections
+## Row
 
-```{r virus_bar, message = FALSE, warning = FALSE, echo = FALSE}
-#| title: "Monthly Detections of USUV and WNV"
+```{r fd_total_captures, message = FALSE, warning = FALSE, echo = FALSE}
+#| title: "Dead Birds Locations, 2016-2022"
 
-virus_bar <- ggplot(monthly_positives, aes(x = month_start, y = sample_count, fill = Virus)) +
-  geom_col(width = 25) +
-  scale_fill_manual(values = c("USUV" = "firebrick", "WNV" = "orange")) +
-  scale_x_date(date_breaks = "1 year", date_labels = "%Y") + # Simplified breaks
-  labs(title = "", x = "Month", y = "Count") +
-  theme_light()
+total_map <- base_map +
+  geom_point(
+    data = dead_birds_clustered,
+    aes(
+      x = Long_rep, y = Lat_rep, size = cluster_size,
+      text = paste("Number of Birds:", cluster_size)
+    ),
+    fill = "seagreen3", alpha = 0.6, shape = 21, color = "black", stroke = 0.4
+  ) +
+  scale_size_continuous(name = "Number of Birds", range = c(0.5, 7.5)) +
+  labs(title = " ")
 
-ggplotly(virus_bar)
+ggplotly(total_map, tooltip = "text") %>%
+  layout(
+    xaxis = list(autorange = TRUE),
+    yaxis = list(autorange = TRUE),
+    margin = list(l = 0, r = 0, b = 0, t = 20, pad = 0)
+  )
 ```
 
+```{r fd_positive_captures, message = FALSE, warning = FALSE, echo = FALSE}
+#| title: "Positive Dead Birds Capture Locations, 2016-2022"
+
+usuv_map <- base_map +
+  geom_point(
+    data = dead_pos_clustered,
+    aes(
+      x = Long_rep, y = Lat_rep, size = cluster_size,
+      text = paste("Virus:", status, "<br>Number of Birds:", cluster_size),
+      fill = status
+    ),
+    alpha = 0.75, shape = 21, color = "black", stroke = 0.4
+  ) +
+  scale_size_continuous(name = "Virus detections", range = c(1, 7.5)) +
+  scale_fill_manual(name = "", values = c("USUV" = "firebrick", "WNV" = "orange")) +
+  labs(title = " ")
+
+ggplotly(usuv_map, tooltip = "text") %>%
+  layout(
+    xaxis = list(autorange = TRUE),
+    yaxis = list(autorange = TRUE),
+    margin = list(l = 0, r = 0, b = 0, t = 20, pad = 0)
+  )
+```
 
 # Sampling Effort
 
+## Row
+
 ### Monthly Sampling by Bird Type
 
-```{r sampling_effort, message = FALSE, warning = FALSE, echo = FALSE}
-#| title: "Total Birds Sampled Per Month"
+```{r live_monthly_total, message = FALSE, warning = FALSE, echo = FALSE}
+#| title: "Free-range Live Birds: Number sampled per month"
 
-monthly_bar <- ggplot(monthly_samples, aes(x = month_start, y = sample_count, fill = class)) +
+monthly_bar <- ggplot(
+  monthly_samples,
+  aes(
+    x = month_start,
+    y = sample_count,
+    fill = class,
+    text = paste("Month:", Month, "<br>Type:", class, "<br>Sample count:", sample_count)
+    )
+  ) +
   geom_col(width = 25) +
   scale_fill_manual(
     name = "Bird Type",
-    values = c("landbirds" = "lightblue", "waterbirds" = "palegreen4")
+    values = c(
+      "landbirds" = "lightblue",
+      "waterbirds" = "palegreen4"
+    )
   ) +
   scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
-  labs(title = "", x = "Month", y = "Count") +
+  labs(title = "", x = "Month", y = "") +
   theme_light()
 
-ggplotly(monthly_bar)
+ggplotly(monthly_bar, tooltip = "text") %>%
+  layout(legend = list(
+      orientation = "h",
+      x = 0.1,
+      y = -0.2
+    )
+  )
 ```
+
+### Monthly Virus Detections
+
+```{r live_monthly_positive, message = FALSE, warning = FALSE, echo = FALSE}
+#| title: "Free-range Live Birds: USUV and WNV detections per month"
+
+virus_bar <- ggplot(
+  monthly_positives,
+  aes(
+    x = month_start,
+    y = sample_count,
+    fill = Virus,
+    text = paste(
+      "Month:", Month, "<br>Sample count:", sample_count, "<br>Virus:", Virus
+      )
+    )
+  ) +
+  geom_col(width = 25) +
+  scale_fill_manual(values = c("USUV" = "firebrick", "WNV" = "orange")) +
+  scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
+  labs(title = "", x = "Month", y = "") +
+  theme_light()
+
+ggplotly(virus_bar, tooltip = "text") %>%
+  layout(legend = list(
+    orientation = "h",
+    x = 0.1,
+    y = -0.2
+  ))
+```
+
+## Row
+
+```{r dead_monthly_total, message = FALSE, warning = FALSE, echo = FALSE}
+#| title: "Dead Birds: Number sampled per month"
+
+monthly_dead_bar <- ggplot(
+  monthly_dead,
+  aes(
+    x = month_start,
+    y = sample_count,
+    fill = Wild_Cap,
+    text = paste("Month:", Month, "<br>Type", Wild_Cap, "<br>Sample count:", sample_count)
+    )
+  ) +
+  geom_col(width = 25) +
+  scale_fill_manual(
+    name = "Bird Type",
+    values = c(
+      "Captive" = "palevioletred1",
+      "Wild" = "skyblue2"
+    )
+  ) +
+  scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
+  labs(title = "", x = "Month", y = "") +
+  theme_light()
+
+ggplotly(monthly_dead_bar, tooltip = "text") %>%
+  layout(legend = list(
+    orientation = "h",
+    x = 0.1,
+    y = -0.2
+  )
+  )
+```
+
+```{r dead_monthly_positive, message = FALSE, warning = FALSE, echo = FALSE}
+#| title: "Dead Birds: Number of USUV detections per month"
+
+monthly_dead_bar <- ggplot(
+  monthly_dead_positives,
+  aes(
+    x = month_start,
+    y = sample_count,
+    fill = Virus,
+    text = paste("Month:", Month, "<br>Virus", Virus, "<br>Sample count:", sample_count)
+    )
+  ) +
+  geom_col(width = 25) +
+  scale_fill_manual(values = c("USUV" = "firebrick", "WNV" = "orange")) +
+  scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
+  labs(title = "", x = "Month", y = "") +
+  theme_light()
+
+ggplotly(monthly_dead_bar, tooltip = "text") %>%
+  layout(legend = list(
+    orientation = "h",
+    x = 0.1,
+    y = -0.2
+  )
+  )
+```
+
+# Seroprevalence
+
+## Row
+
+```{r seroprevalence, message = FALSE, warning = FALSE, echo = FALSE}
+#| title: "USUV and WNV seroprevalence per season"
+### Read in serology data
+df_ss <- read.csv(
+  file = "data/S-BSST1867_SS/SerosurveillanceArboviruses_LiveBirds_NL_16_22.csv",
+  header = TRUE, sep = ",", fill = TRUE, stringsAsFactors = FALSE
+) %>%
+  dplyr::mutate(capture.date = as.Date(capture.date, tryFormats = c("%d-%m-%Y")))
+
+get_year_season <- function(dates) {
+  y <- as.integer(format(dates, "%Y"))
+  m <- as.integer(format(dates, "%m"))
+  
+  season <- ifelse(m %in% 3:5, "spring", ifelse(m %in% 6:8, "summer", ifelse(m %in% 9:11, "autumn", "winter")))
+  
+  season_year <- ifelse(m == 12, y, ifelse(m %in% 1:2, y - 1, y))
+  
+  paste0(season_year, "-", season)
+}
+
+df_ss$year_season <- get_year_season(df_ss$capture.date)
+
+# Calculate seroprevalence per year-season
+df_summary <- df_ss %>%
+  dplyr::filter(English %in% c("Eurasian Blackbird", "Song Thrush")) %>%
+  group_by(year_season) %>%
+  summarise(
+    total_entries = sum(!is.na(PMA.USUV.Ab6000)),
+    usuv_percent  = 100 * sum(SeroResult == "USUV",  na.rm = TRUE) / total_entries,
+    wnv_percent   = 100 * sum(SeroResult == "WNV",   na.rm = TRUE) / total_entries,
+    flavi_percent = 100 * sum(SeroResult == "FLAVI", na.rm = TRUE) / total_entries
+  ) %>%
+  arrange(year_season)
+
+
+df_summary <- df_summary %>%
+  mutate(
+    season = sub(".*-", "", year_season),
+    season_order = case_when(
+      season == "winter" ~ 4,
+      season == "spring" ~ 1,
+      season == "summer" ~ 2,
+      season == "autumn" ~ 3
+    ),
+    # build a numeric sort key
+    sort_key = paste0(substr(year_season, 1, 4), ".", season_order)
+  )
+
+df_summary <- df_summary %>%
+  arrange(as.numeric(sort_key)) %>%
+  mutate(year_season = factor(year_season, levels = unique(year_season)))
+
+df_long <- df_summary %>%
+  pivot_longer(
+    cols = ends_with("_percent"),
+    names_to = "Virus",
+    values_to = "percent"
+  )
+
+df_long$Virus <- recode(df_long$Virus,
+                        usuv_percent = "USUV-Ab",
+                        wnv_percent  = "WNV-Ab",
+                        flavi_percent = "Orthoflavivirus-Ab")
+
+
+p <- ggplot(df_long, aes(x = year_season, y = percent, color = Virus, group = Virus)) +
+  geom_line() +
+  labs(title = "Live Blackbirds and Song Thrushes") + 
+  theme_bw() +
+  theme(axis.text.x = element_text(angle=60))
+
+ggplotly(p)
+```
+
+## Row
+Seroprevalence for USUV and WNV in live Eurasian Blackbirds and Song Thrushes, expressed as percentages of neutralization assay confirmed seropositives out of the total tested on the protein microarray (PMA). 
+
+
+# About
+
+::: {.callout-important}
+## Notice
+
+This dashboard is under active development and therefore is subject to rapid changes. Take note of the version number and last updated date on the main page of the dashboard.
+:::
+
+
+The used datasets can be obtained from the [Pathogen Portal](https://www.pathogensportal.nl/arboviruses_in_birds.html).
+
+- Surveillance for arboviruses in dead captive birds in the Netherlands, 2016-2022
+- Surveillance for arboviruses in free ranging live birds in the Netherlands, 2016-2022
+- Surveillance for arboviruses in free ranging dead birds in the Netherlands, 2016-2022
+- Study of arboviruses in mosquitoes at bird ringing sites in the Netherlands, 2020-2022
+
+This dashboard is built with [Quarto Dashboards](https://quarto.org/docs/dashboards/). All code is open source and can be found here: [<i class="bi bi-github"></i> Source code](https://github.com/LucvZon/bird-surveillance-dashboard)
