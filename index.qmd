@@ -3,7 +3,7 @@ title: "Bird Surveillance Dashboard"
 format:
   dashboard:
     nav-buttons: [github]
-    github: https://github.com/LucvZon/bird-surveillance-dashboard
+    github: https://github.com/emc-viroscience/bird-surveillance-dashboard
     embed-resources: true
     scrolling: true
 theme: cosmo
@@ -570,4 +570,4 @@ The used datasets can be obtained from the [Pathogen Portal](https://www.pathoge
 - Surveillance for arboviruses in free ranging dead birds in the Netherlands, 2016-2022
 - Study of arboviruses in mosquitoes at bird ringing sites in the Netherlands, 2020-2022
 
-This dashboard is built with [Quarto Dashboards](https://quarto.org/docs/dashboards/). All code is open source and can be found here: [<i class="bi bi-github"></i> Source code](https://github.com/LucvZon/bird-surveillance-dashboard)
+This dashboard is built with [Quarto Dashboards](https://quarto.org/docs/dashboards/). All code is open source and can be found here: [<i class="bi bi-github"></i> Source code](https://github.com/emc-viroscience/bird-surveillance-dashboard)
