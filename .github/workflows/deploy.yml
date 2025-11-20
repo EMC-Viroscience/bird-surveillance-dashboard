@@ -44,8 +44,28 @@ jobs:
         with:
           packages: any::tidyverse, any::sf, any::plotly, any::dbscan, any::lubridate, any::forcats
 
-      - name: Render Quarto Dashboard
-        run: quarto render
+      - name: Debug environment
+        run: |
+          echo "RUNNER_OS='$RUNNER_OS'"
+          echo "GITHUB_RUNNER_OS env:"
+          env | sort
+          echo "quarto version:"
+          quarto --version || echo "quarto not found"
+          echo "R version:"
+          R --version
+          echo "List repo files:"
+          ls -la
+
+      - name: Render Quarto Dashboard (verbose)
+        run: |
+          quarto --version
+          quarto render --log-level debug || {
+            echo "=== QUARTO RENDER FAILED ==="
+            # optional: capture environment and generated logs
+            ls -la _site || true
+            tail -n 200 /home/runner/.quarto/logs/quarto.log || true
+            exit 1
+          }
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
