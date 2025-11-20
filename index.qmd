@@ -3,7 +3,7 @@ title: "Bird Surveillance Dashboard"
 format:
   dashboard:
     nav-buttons: [github]
-    github: https://github.com/LucvZon/EcoAlert
+    github: https://github.com/LucvZon/bird-surveillance-dashboard
     embed-resources: true
     scrolling: true
 theme: cosmo
@@ -186,13 +186,13 @@ monthly_dead_positives <- all_dead_birds %>%
 # Spatial Overview
 
 ::: {.callout-note}
-- Dashboard Version: **1.0.0**
-- Last updated: **19/11/2025**
+- Dashboard Version: **1.0.1**
+- Last updated: **20/11/2025**
 :::
 
 ## Row
 
-### Total captures
+### FA captures
 
 ```{r fa_total_captures, message = FALSE, warning = FALSE, echo = FALSE}
 #| title: "Free-ranging Live Birds Capture Locations, 2016-2022"
@@ -204,9 +204,18 @@ total_map <- base_map +
       x = Long_rep, y = Lat_rep, size = cluster_size,
       text = paste("Number of Birds:", cluster_size)
     ),
-    fill = "steelblue", alpha = 0.6, shape = 21, color = "black", stroke = 0.4
+    fill = "steelblue", alpha = 0.6, shape = 21, color = "transparent", stroke = 0.4
   ) +
-  scale_size_continuous(name = "Number of Birds", range = c(0.5, 7.5)) +
+  geom_text(
+    data = live_free_range,
+    aes(
+      x = Long_rep,
+      y = Lat_rep,
+      label = ifelse(cluster_size>1000,cluster_size,'')
+    ),
+    size = 2
+  ) +
+  scale_size_continuous(name = "Number of Birds", range = c(0.5, 12)) +
   labs(title = " ")
 
 ggplotly(total_map, tooltip = "text") %>%
@@ -217,7 +226,7 @@ ggplotly(total_map, tooltip = "text") %>%
   )
 ```
 
-### Captures by Family
+### Positive FA captures
 
 ```{r fa_positive_captures, message = FALSE, warning = FALSE, echo = FALSE}
 #| title: "Free-ranging Positive Live Birds Capture Locations, 2016-2022"
@@ -229,7 +238,16 @@ usuv_map <- base_map +
       text = paste("Virus:", status, "<br>Number of Birds:", cluster_size),
       fill = status
     ),
-    alpha = 0.75, shape = 21, color = "black", stroke = 0.4
+    alpha = 0.75, shape = 21, color = "transparent", stroke = 0.4
+  ) +
+    geom_text(
+    data = fa_pos_clustered_df,
+    aes(
+      x = Long_rep,
+      y = Lat_rep,
+      label = ifelse(cluster_size>=15,cluster_size,'')
+    ),
+    size = 3, color = "white"
   ) +
   scale_size_continuous(name = "Virus detections", range = c(1, 7.5)) +
   scale_fill_manual(name = "", values = c("USUV" = "firebrick", "WNV" = "orange")) +
@@ -255,7 +273,16 @@ total_map <- base_map +
       x = Long_rep, y = Lat_rep, size = cluster_size,
       text = paste("Number of Birds:", cluster_size)
     ),
-    fill = "seagreen3", alpha = 0.6, shape = 21, color = "black", stroke = 0.4
+    fill = "seagreen3", alpha = 0.6, shape = 21, color = "transparent", stroke = 0.4
+  ) +
+  geom_text(
+    data = dead_birds_clustered,
+    aes(
+      x = Long_rep,
+      y = Lat_rep,
+      label = ifelse(cluster_size>=50,cluster_size,'')
+    ),
+    size = 3
   ) +
   scale_size_continuous(name = "Number of Birds", range = c(0.5, 7.5)) +
   labs(title = " ")
@@ -279,7 +306,16 @@ usuv_map <- base_map +
       text = paste("Virus:", status, "<br>Number of Birds:", cluster_size),
       fill = status
     ),
-    alpha = 0.75, shape = 21, color = "black", stroke = 0.4
+    alpha = 0.75, shape = 21, color = "transparent", stroke = 0.4
+  ) +
+    geom_text(
+    data = dead_pos_clustered,
+    aes(
+      x = Long_rep,
+      y = Lat_rep,
+      label = ifelse(cluster_size>=6,cluster_size,'')
+    ),
+    size = 3, color = "white"
   ) +
   scale_size_continuous(name = "Virus detections", range = c(1, 7.5)) +
   scale_fill_manual(name = "", values = c("USUV" = "firebrick", "WNV" = "orange")) +
@@ -487,19 +523,31 @@ df_long <- df_summary %>%
     values_to = "percent"
   )
 
-df_long$Virus <- recode(df_long$Virus,
-                        usuv_percent = "USUV-Ab",
-                        wnv_percent  = "WNV-Ab",
-                        flavi_percent = "Orthoflavivirus-Ab")
+df_long$Virus <- recode(
+  df_long$Virus,
+  usuv_percent = "USUV-Ab",
+  wnv_percent  = "WNV-Ab",
+  flavi_percent = "Orthoflavivirus-Ab"
+  )
 
 
-p <- ggplot(df_long, aes(x = year_season, y = percent, color = Virus, group = Virus)) +
+p <- ggplot(
+  df_long,
+  aes(
+    x = year_season,
+    y = percent,
+    color = Virus,
+    group = Virus,
+    text = paste("Season:", year_season, "<br>Result:", Virus, "<br>Percentage:", round(percent, digits=2)))
+  ) +
   geom_line() +
-  labs(title = "Live Blackbirds and Song Thrushes") + 
+  labs(title = "Live Blackbirds and Song Thrushes", y = "", x = "Season") +
+  scale_color_manual(values = c("USUV-Ab" = "firebrick", "WNV-Ab" = "orange", "Orthoflavivirus-Ab" = "#901fd1")) +
+  scale_y_continuous(labels = function(x) paste(x, "%")) +
   theme_bw() +
   theme(axis.text.x = element_text(angle=60))
 
-ggplotly(p)
+ggplotly(p, tooltip = "text")
 ```
 
 ## Row
