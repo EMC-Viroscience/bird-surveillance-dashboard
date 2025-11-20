@@ -1,10 +1,10 @@
 # Bird Surveillance Dashboard
 
-![alt text](https://github.com/LucvZon/bird-surveillance-dashboard/actions/workflows/deploy.yml/badge.svg)
+![alt text](https://github.com/emc-viroscience/bird-surveillance-dashboard/actions/workflows/deploy.yml/badge.svg)
 
 This repository contains the source code for an interactive web dashboard visualizing arbovirus surveillance data in birds across the Netherlands from 2016 to 2022. The dashboard provides spatial and temporal insights into sampling efforts and the detection of viruses like Usutu (USUV) and West Nile Virus (WNV).
 
-➡️ [View the live dashboard here](https://lucvzon.github.io/bird-surveillance-dashboard/)
+➡️ [View the live dashboard here](https://emc-viroscience.github.io/bird-surveillance-dashboard/)
 
 ## Key Features
 - Interactive Maps: Spatial distribution of captured/found birds (live and dead), with clustering for high-density areas.
